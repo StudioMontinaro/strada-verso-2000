@@ -51,10 +51,41 @@ function go(view, arg, opts = {}) {
     try { history.pushState({ n: NAV.length }, ''); } catch {}
   } else if (curNav) { /* stessa schermata: nessun nuovo passo */ }
   if (arg && typeof arg === 'object' && arg.auto) { const { auto, ...rest } = arg; curNav = { view, arg: rest }; } else curNav = { view, arg };
+  rememberView();
   document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('on', b.dataset.v === view));
   window.scrollTo(0, 0);
   app.classList.remove('enter'); void app.offsetWidth; app.classList.add('enter');
   views[view](arg);
+}
+// Ultima schermata: salvata a ogni passo, così alla riapertura (anche dopo una telefonata) si riparte dallo stesso punto.
+const RESTORABLE = new Set(['home', 'today', 'study', 'games', 'stats', 'settings', 'coords', 'puzzles', 'genlist', 'tutors', 'look', 'review', 'setup', 'dailyReview']);
+const DAILY_VIEWS = new Set(['drill', 'coordsDaily', 'dailyReview', 'session', 'lesson', 'play', 'setup']);
+function rememberView() {
+  try {
+    if (!curNav) return;
+    const { view, arg } = curNav;
+    const inDaily = (DAILY_VIEWS.has(view) && (arg?.daily !== undefined || ['drill', 'coordsDaily', 'dailyReview'].includes(view)));
+    let a; try { a = arg && typeof arg === 'object' ? JSON.parse(JSON.stringify(arg)) : arg; } catch { a = undefined; }
+    store.set('last-view', { view, arg: RESTORABLE.has(view) ? a : undefined, inDaily, free: view === 'play' && arg?.daily === undefined, t: Date.now() });
+  } catch {}
+}
+async function restoreSession() {
+  const L = BOOT;
+  const free = store.get('free-game', null);
+  if (free && Date.now() - (new Date(free.date).getTime() || 0) < 36e5 * 24) {
+    try { const eng = await ensureEngine(null); NAV.push({ view: 'home' }); history.pushState({ n: 1 }, ''); go('play', { eng, color: free.color, elo: free.elo, tc: free.tc, resume: free }); return true; } catch {}
+  }
+  if (!L || Date.now() - L.t > 36e5 * 18) return false;
+  if (L.inDaily) {
+    go('today');
+    await new Promise(r => setTimeout(r, 250));
+    const b = document.querySelector('.phases [data-go]'); if (b) b.click();
+    await new Promise(r => setTimeout(r, 400));
+    document.querySelector('#res')?.click();
+    return true;
+  }
+  if (L.view && L.view !== 'home' && RESTORABLE.has(L.view)) { NAV.push({ view: 'home' }); try { history.pushState({ n: 1 }, ''); } catch {} go(L.view, L.arg); return true; }
+  return false;
 }
 function goBack() {
   if (!NAV.length) return false;
@@ -160,12 +191,14 @@ views.home = () => {
     <button class="btn primary big" id="goToday">${D.finished ? 'Rivedi la lezione di oggi' : resumeInfo() ? 'Riprendi da dove eri ▶' : nDone ? 'Continua la lezione ▶' : 'Inizia la lezione ▶'}</button>
     <div class="row"><button class="btn" id="play">♞ Partita libera</button><button class="btn" id="goPz">✦ Puzzle liberi</button></div>
   </section>
+  ${backupDue() ? '<section class="panel bkbanner"><p class="small">💾 Non hai una copia recente dei tuoi progressi. Salvala in Impostazioni: serve se cambi telefono.</p><button class="btn small" id="bkGo">Salva ora</button></section>' : ''}
   <section class="cards">
     <div class="card" id="toStats"><div class="k">Partite</div><div class="v">${st.all.length}</div><div class="s">${st.res.w} vinte, ${st.res.d} patte, ${st.res.l} perse</div></div>
     <div class="card" id="toStats2"><div class="k">Precisione</div><div class="v">${st.acc ?? '—'}${st.acc !== null ? '%' : ''}</div><div class="s">media ultime 10 analizzate</div></div>
   </section>`;
   // Un solo momento animato: il cavallo sale lungo il percorso fino al rating attuale.
   requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (!$('#fill')) return;
     const pct = progressPct(R.r);
     $('#fill').style.width = pct + '%';
     $('#knight').style.left = pct + '%';
@@ -174,6 +207,7 @@ views.home = () => {
   }));
   $('#play').onclick = () => go('setup');
   $('#goToday').onclick = () => go('today');
+  $('#bkGo')?.addEventListener('click', () => go('settings'));
   $('#goPz').onclick = () => go('puzzles');
   $('#toStats').onclick = $('#toStats2').onclick = () => go('stats');
   $('#rEdit').onclick = () => {
@@ -263,11 +297,12 @@ views.play = async ({ eng, color, elo, tc, daily, resume }) => {
     G.id = resume.id; G.date = resume.date; G.clocks = { ...resume.clocks }; G.times = resume.times.slice();
     for (const san of resume.moves) G.chess.move(san);
   }
+  const SAVEKEY = daily !== undefined ? 'daily-game' : 'free-game';
   const persistGame = () => {
-    if (daily === undefined || G.over || !G.chess.history().length) return;
+    if (G.over || !G.chess.history().length) return;
     const clocks = { ...G.clocks };
     if (G.turnStart !== null) { const t = G.chess.turn(); clocks[t] = Math.max(1000, clocks[t] - (performance.now() - G.turnStart)); }
-    store.set('daily-game', { day: dailyState().dayNo, id: G.id, date: G.date, color, elo, tc, moves: G.chess.history(), clocks, times: G.times });
+    store.set(SAVEKEY, { day: dailyState().dayNo, id: G.id, date: G.date, color, elo, tc, moves: G.chess.history(), clocks, times: G.times });
   };
   const opp = color === 'w' ? 'b' : 'w';
   app.innerHTML = `
@@ -370,7 +405,7 @@ views.play = async ({ eng, color, elo, tc, daily, resume }) => {
   function finish(reason) {
     if (G.over) return;
     G.over = true;
-    if (daily !== undefined) localStorage.removeItem('daily-game');
+    localStorage.removeItem(SAVEKEY);
     clearInterval(tick);
     cancelBg();
     if (G.engineBusy) eng.stop();
@@ -411,7 +446,7 @@ views.play = async ({ eng, color, elo, tc, daily, resume }) => {
 
   $('#flip').onclick = () => { board.orient = board.orient === 'w' ? 'b' : 'w'; board.render(); };
   $('#resign').onclick = () => { if (!G.over && confirm('Abbandonare la partita?')) finish('abbandono'); };
-  const unload = e => { if (daily !== undefined) { persistGame(); return; } if (!G.over && G.chess.history().length) { e.preventDefault(); e.returnValue = ''; } };
+  const unload = () => { persistGame(); };
   window.addEventListener('beforeunload', unload);
   const onHide = () => { if (document.visibilityState === 'hidden') persistGame(); };
   document.addEventListener('visibilitychange', onHide);
@@ -1046,6 +1081,42 @@ views.stats = () => {
 };
 
 // ---------- IMPOSTAZIONI ----------
+function backupDue() {
+  const has = store.get('daily-count', 0) > 0 || games().length > 0;
+  const last = store.get('last-backup', 0);
+  return has && Date.now() - last > 7 * 864e5;
+}
+// ---------- COPIA DEI PROGRESSI ----------
+function backupData() {
+  const data = {};
+  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); data[k] = localStorage.getItem(k); }
+  try { const st = JSON.parse(data.settings || '{}'); delete st.apiKey; data.settings = JSON.stringify(st); } catch {}
+  return { app: 'strada-verso-2000', version: 1, date: new Date().toISOString(), data };
+}
+async function backupSave() {
+  const name = `scacchi-progressi-${new Date().toISOString().slice(0, 10)}.json`;
+  const blob = new Blob([JSON.stringify(backupData())], { type: 'application/json' });
+  const file = new File([blob], name, { type: 'application/json' });
+  try {
+    if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: 'Copia progressi scacchi' }); store.set('last-backup', Date.now()); return toast('Copia salvata'); }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  store.set('last-backup', Date.now()); toast('Copia scaricata nella cartella Download');
+}
+async function backupLoad(file) {
+  try {
+    const j = JSON.parse(await file.text());
+    if (j.app !== 'strada-verso-2000' || !j.data) throw new Error('File non valido');
+    const n = Object.keys(j.data).length;
+    if (!confirm(`Ripristinare la copia del ${new Date(j.date).toLocaleDateString('it-IT')}? I progressi attuali su questo telefono verranno sostituiti.`)) return;
+    const keepKey = (() => { try { return JSON.parse(localStorage.getItem('settings') || '{}').apiKey || ''; } catch { return ''; } })();
+    localStorage.clear();
+    for (const [k, v] of Object.entries(j.data)) localStorage.setItem(k, v);
+    try { const st = JSON.parse(localStorage.getItem('settings') || '{}'); if (keepKey) st.apiKey = keepKey; localStorage.setItem('settings', JSON.stringify(st)); } catch {}
+    toast(`Ripristinati ${n} elementi`); setTimeout(() => location.reload(), 900);
+  } catch (e) { toast('Copia non valida: ' + e.message); }
+}
 views.settings = () => {
   const s = settings();
   const meta = engineMeta();
@@ -1063,6 +1134,10 @@ views.settings = () => {
     <h3>Aspetto ed effetti</h3>
     <button class="btn" id="look">♞ Pezzi e scacchiera</button>
     <button class="btn" id="tutors">🎓 Scegli il tutor</button>
+    <h3>Copia dei progressi</h3>
+    <p class="muted small">I progressi restano nel telefono anche quando lo spegni. Per un telefono nuovo, o se cancelli i dati dell'app, salva una copia: contiene partite, lezioni, rating e tutto il resto (non la chiave API).${store.get('last-backup', null) ? ` Ultima copia: ${new Date(store.get('last-backup')).toLocaleDateString('it-IT')}.` : ''}</p>
+    <div class="row"><button class="btn primary" id="bkSave">💾 Salva copia</button><button class="btn" id="bkLoad">📂 Ripristina da copia</button></div>
+    <input type="file" id="bkFile" accept=".json,application/json" hidden>
     <label class="switch"><input type="checkbox" id="snd" ${s.sound !== false ? 'checked' : ''}><span></span>Suoni</label>
     <label class="lbl">Suono delle mosse (tocca per ascoltare)</label>
     <div class="seg wrap soundsets" id="sset">${SOUND_SETS.map(([k, t]) => `<button data-v="${k}" class="${(s.soundSet || 'torneo') === k ? 'on' : ''}">${t}</button>`).join('')}</div>
@@ -1097,6 +1172,9 @@ views.settings = () => {
   };
   $('#look').onclick = () => go('look');
   $('#tutors').onclick = () => go('tutors');
+  $('#bkSave').onclick = () => backupSave();
+  $('#bkLoad').onclick = () => $('#bkFile').click();
+  $('#bkFile').onchange = e => { const f = e.target.files[0]; if (f) backupLoad(f); };
   $('#snd').onchange = e => { saveSettings({ sound: e.target.checked }); if (e.target.checked) sound('good'); };
   $('#sset').addEventListener('click', async e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -1161,4 +1239,6 @@ preloadSounds();
 installPuzzleViews({ views, app, $, esc, go, toast, store, games, markPhase, askClaude, fmtAI, describePosition, getEngine: () => ensureEngine(null), setCleanup: f => { cleanup = f; } });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+const BOOT = store.get('last-view', null);
 go('home');
+restoreSession().catch(() => {});
