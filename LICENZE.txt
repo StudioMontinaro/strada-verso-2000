@@ -1,0 +1,28 @@
+Componenti di terze parti inclusi in questa app (uso personale)
+
+Motore scacchistico
+- Stockfish 19 lite single-thread (port WebAssembly stockfish.js di Nathan Rugg / Chess.com), incluso in engine/ - GPLv3
+
+Logica degli scacchi
+- chess.js 1.4.0 di Jeff Hlywa - licenza BSD-2-Clause
+
+Puzzle
+- Selezione dalla base dati pubblica dei puzzle di Lichess (database.lichess.org) - CC0
+
+Pezzi (da lichess-org/lila, public/piece)
+- cburnett: Colin M.L. Burnett - GPLv2+
+- merida: Armando Hernandez Marroquin - GPLv2+
+- alpha: Eric Bentzen - gratuito per uso personale non commerciale
+- california: Jerry S. - CC BY-NC-SA 4.0
+- staunty, maestro: sadsnake1 - CC BY-NC-SA 4.0
+- chessnut: Alexis Luengas - Apache 2.0
+- fantasy: Maurizio Monge - MIT
+
+Scacchiere (da lichess-org/lila, public/images/board)
+- wood, maple, marble, wood4, blue2, olive: the lila authors - AGPLv3+
+
+Suoni (da lichess-org/lila, public/sound)
+- piano, sfx, nes, futuristic: Enigmahack - AGPLv3+
+- lisp: EdinburghCollective - CC BY-NC-SA 4.0
+- pychess: dal progetto PyChess - GPLv3 (crediti nel file ARTISTS di PyChess)
+- Torneo, Ebano, Bosso, Legno, Feltro, Plastica, Marmo, Vetro, Campanella, Bolla, Clic digitale: sintetizzati nell'app
