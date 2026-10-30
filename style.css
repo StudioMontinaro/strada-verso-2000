@@ -386,3 +386,9 @@ details { margin-top: 10px; } summary { color: var(--accent); cursor: pointer; }
 .tavw.hasgood .thumb { display: none; }
 .fx-good .spark path { fill: #ffd54a !important; }
 .fx-good .spark.s2 path { fill: #fff !important; }
+
+/* indicatore del gesto indietro */
+.swipehint { position: fixed; top: 50%; z-index: 80; width: 40px; height: 40px; margin-top: -20px; border-radius: 50%; background: var(--card, #1d2b23); color: var(--text, #eee); box-shadow: 0 2px 12px rgba(0,0,0,.5); display: grid; place-items: center; font: 700 26px/1 var(--sans, sans-serif); pointer-events: none; opacity: .85; transition: background .12s; }
+.swipehint.left { left: 0; transform: translateX(calc(var(--d, 0px) - 40px)); }
+.swipehint.right { right: 0; transform: translateX(calc(40px - var(--d, 0px))) scaleX(-1); }
+.swipehint.armed { background: var(--accent, #e8b84a); color: #14201a; }

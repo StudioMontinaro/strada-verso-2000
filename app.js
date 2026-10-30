@@ -38,15 +38,58 @@ const getGame = id => games().find(g => g.id === id);
 
 // ---------- navigazione ----------
 let cleanup = null;
-function go(view, arg) {
-  if (cleanup) { const c = cleanup; cleanup = null; if (c() === false) return; }
+// Navigazione: pila delle schermate visitate. Il gesto indietro di Android (e lo scorrimento dal bordo) riporta alla schermata precedente.
+const NAV = [];
+let curNav = null;
+function go(view, arg, opts = {}) {
+  if (cleanup) { const c = cleanup; cleanup = null; if (c() === false) return false; }
   stopSpeech();
   closeTutors();
+  if (opts.back) NAV.pop();
+  else if (curNav && !(curNav.view === view && arg === undefined)) {
+    NAV.push(curNav); if (NAV.length > 40) NAV.shift();
+    try { history.pushState({ n: NAV.length }, ''); } catch {}
+  } else if (curNav) { /* stessa schermata: nessun nuovo passo */ }
+  if (arg && typeof arg === 'object' && arg.auto) { const { auto, ...rest } = arg; curNav = { view, arg: rest }; } else curNav = { view, arg };
   document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('on', b.dataset.v === view));
   window.scrollTo(0, 0);
   app.classList.remove('enter'); void app.offsetWidth; app.classList.add('enter');
   views[view](arg);
 }
+function goBack() {
+  if (!NAV.length) return false;
+  const prev = NAV[NAV.length - 1];
+  const r = go(prev.view, prev.arg, { back: true });
+  if (r === false) { try { history.pushState({ n: NAV.length }, ''); } catch {} }   // uscita annullata: resta dov'era
+  return r !== false;
+}
+window.addEventListener('popstate', () => { if (NAV.length) goBack(); });
+// Scorrimento dal bordo dello schermo verso l'interno = indietro, come nella navigazione a gesti di Android.
+(() => {
+  let sx = 0, sy = 0, t0 = 0, edge = 0, on = false, hint = null;
+  const mk = () => { hint = document.createElement('div'); hint.className = 'swipehint'; hint.textContent = '‹'; document.body.append(hint); };
+  const rm = () => { hint?.remove(); hint = null; on = false; };
+  addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0], w = innerWidth;
+    edge = t.clientX < 26 ? 1 : t.clientX > w - 26 ? -1 : 0;
+    on = !!edge && NAV.length > 0; sx = t.clientX; sy = t.clientY; t0 = Date.now();
+  }, { passive: true });
+  addEventListener('touchmove', e => {
+    if (!on) return;
+    const t = e.touches[0], dx = (t.clientX - sx) * edge, dy = Math.abs(t.clientY - sy);
+    if (dy > dx * 0.8 && dx < 30) { rm(); return; }
+    if (dx > 12) { if (!hint) mk(); hint.style.setProperty('--d', Math.min(dx, 90) + 'px'); hint.classList.toggle('left', edge === 1); hint.classList.toggle('right', edge === -1); hint.classList.toggle('armed', dx > 70); }
+  }, { passive: true });
+  addEventListener('touchend', e => {
+    if (!on) return;
+    const t = e.changedTouches[0], dx = (t.clientX - sx) * edge, dy = Math.abs(t.clientY - sy);
+    const ok = dx > 70 && dy < dx && Date.now() - t0 < 700;
+    rm();
+    if (ok) history.back();
+  }, { passive: true });
+  addEventListener('touchcancel', rm, { passive: true });
+})();
 document.querySelector('.nav').addEventListener('click', e => {
   const b = e.target.closest('button'); if (b) go(b.dataset.v);
 });
