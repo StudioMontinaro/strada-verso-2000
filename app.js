@@ -12,6 +12,8 @@ import { EvalBar } from './evalbar.js';
 import { speak, announceMove, stopSpeech, speakable, italianVoices } from './speech.js';
 import { Tutor, errorLesson, closeTutors } from './tutor.js';
 import { gameLesson } from './game-tutor.js';
+import { createLiveTutor } from './live-tutor.js';
+import { avatarId, getAvatar } from './avatars.js';
 import { SOUND_SETS, preloadSounds } from './fx.js';
 import { CATS } from './lessons-data.js';
 import { installDaily, dailyState, markPhase, PHASE_DEFS, currentModule, plan, resumeInfo, addDailyGame, reviewGameDone, MIN_GAMES } from './daily.js';
@@ -190,6 +192,7 @@ views.home = () => {
     <p class="small">Settimana dell'apertura: <b>${esc(currentModule().white.title)}</b> e <b>${esc(currentModule().black.title)}</b>, giorno ${Math.min(plan().days + 1, 7)} di 7.</p>
     <button class="btn primary big" id="goToday">${D.finished ? 'Rivedi la lezione di oggi' : resumeInfo() ? 'Riprendi da dove eri ▶' : nDone ? 'Continua la lezione ▶' : 'Inizia la lezione ▶'}</button>
     <div class="row"><button class="btn" id="play">♞ Partita libera</button><button class="btn" id="goPz">✦ Puzzle liberi</button></div>
+    <div class="row"><button class="btn" id="homeTutor">🎓 Il tuo tutor: ${esc(getAvatar(avatarId()).name)}</button></div>
   </section>
   ${backupDue() ? '<section class="panel bkbanner"><p class="small">💾 Non hai una copia recente dei tuoi progressi. Salvala in Impostazioni: serve se cambi telefono.</p><button class="btn small" id="bkGo">Salva ora</button></section>' : ''}
   <section class="cards">
@@ -209,6 +212,7 @@ views.home = () => {
   $('#goToday').onclick = () => go('today');
   $('#bkGo')?.addEventListener('click', () => go('settings'));
   $('#goPz').onclick = () => go('puzzles');
+  $('#homeTutor').onclick = () => go('tutors');
   $('#toStats').onclick = $('#toStats2').onclick = () => go('stats');
   $('#rEdit').onclick = () => {
     const v = prompt('Il tuo rating Lichess blitz attuale:', R.r);
@@ -252,6 +256,8 @@ views.setup = (opts = {}) => {
     <input type="range" id="elo" min="1320" max="2400" step="10" value="${s.elo}">
     <p class="muted small">Il valore Elo del motore è una stima interna di Stockfish, non equivale al rating Lichess blitz. Parti da 1350-1450 e alzalo quando vinci con regolarità.</p>
     <label class="switch"><input type="checkbox" id="evb" ${s.evalbar !== false ? 'checked' : ''}><span></span>Barra della valutazione durante la partita</label>
+    <label class="switch"><input type="checkbox" id="liveSet" ${s.liveTutor !== false ? 'checked' : ''}><span></span>Tutor in diretta (spiega i tuoi errori mentre giochi)</label>
+    <p class="muted small">Il tutor attuale è <b>${esc(getAvatar(avatarId()).name)}</b>. <button class="linkbtn" id="chTutor">Cambia tutor</button></p>
     <button class="btn primary big" id="start">Inizia</button>
     <p class="muted small" id="estatus"></p>
     ${daily !== undefined ? '<div class="orbox"><span>oppure</span><button class="btn" id="fromLi">⇩ Usa una partita giocata oggi su Lichess</button><p class="muted small">Incolli il PGN di una tua partita di oggi: la revisione e il resto della lezione si fanno su quella.</p></div>' : ''}
@@ -265,6 +271,8 @@ views.setup = (opts = {}) => {
   if (daily === undefined) pick('#color', 'color');
   pick('#tc', 'tc');
   $('#evb').onchange = e => saveSettings({ evalbar: e.target.checked });
+  $('#liveSet').onchange = e => saveSettings({ liveTutor: e.target.checked });
+  $('#chTutor').onclick = () => go('tutors');
   $('#elo').oninput = e => { $('#eloV').textContent = e.target.value; saveSettings({ elo: +e.target.value }); };
   $('#start').onclick = async () => {
     const btn = $('#start'); btn.disabled = true;
@@ -310,9 +318,12 @@ views.play = async ({ eng, color, elo, tc, daily, resume }) => {
     <div class="player top"><span class="name">Stockfish ${elo}</span><span class="clock" id="ck-${opp}">${fmtClock(G.clocks[opp])}</span></div>
     <div class="bwrap"><div class="evalbar ${settings().evalbar === false ? 'gone' : ''}" id="eb"><div></div><span></span></div><div id="board"></div></div>
     <div class="player bottom"><span class="name">Tu</span><span class="clock" id="ck-${color}">${fmtClock(G.clocks[color])}</span></div>
+    <div id="liveNote"></div>
+    <div id="liveTutor"></div>
     <div class="moves" id="mv"></div>
+    <label class="switch slim"><input type="checkbox" id="liveSw" ${settings().liveTutor !== false ? 'checked' : ''}><span></span>Tutor in diretta: commenta e spiega ogni mossa</label>
     <label class="switch slim"><input type="checkbox" id="spk" ${settings().speakMoves ? 'checked' : ''}><span></span>Leggi ad alta voce la casella di ogni mossa</label>
-    <div class="row"><button class="btn" id="flip">⇅ Gira</button><button class="btn danger" id="resign">⚑ Abbandona</button></div>
+    <div class="row"><button class="btn" id="hint" ${settings().liveTutor === false ? 'hidden' : ''}>💡 Suggerimento</button><button class="btn" id="flip">⇅ Gira</button><button class="btn danger" id="resign">⚑ Abbandona</button></div>
   </section>`;
   const board = new Board($('#board'));
   const bar = new EvalBar($('#eb'));
@@ -339,6 +350,14 @@ views.play = async ({ eng, color, elo, tc, daily, resume }) => {
   await eng.newGame();
   await eng.configure({ 'UCI_LimitStrength': 'true', 'UCI_Elo': elo, 'Skill Level': 20 });
 
+  // Tutor in diretta: durante la sua spiegazione orologi e partita restano fermi.
+  const pauseClock = () => { if (G.turnStart !== null) { G.paused = performance.now() - G.turnStart; G.turnStart = null; } };
+  const resumeClock = () => { if (G.paused !== undefined && G.paused !== null) { G.turnStart = performance.now() - G.paused; G.paused = null; } };
+  const liveOn = () => settings().liveTutor !== false;
+  const live = createLiveTutor({ eng, board, color, elo, G, refresh: () => refresh(), noteEl: $('#liveNote'), anchorEl: $('#liveTutor'), pause: pauseClock, resume: resumeClock, cancelBg, restart: () => { if (!G.over && G.chess.turn() === color) startBg(); }, settings });
+  $('#liveSw').onchange = e => { saveSettings({ liveTutor: e.target.checked }); $('#hint').hidden = !e.target.checked; if (!e.target.checked) { live.clear(); live.close(); refresh(); } else live.note('Tutor attivo: dopo ogni tua mossa ti dico come è andata. Se ti serve aiuto, tocca Suggerimento.'); };
+  $('#hint').onclick = async () => { const b = $('#hint'); b.disabled = true; try { await live.hint(); } finally { b.disabled = false; } };
+
   const kingSq = () => {
     if (!G.chess.inCheck()) return null;
     const t = G.chess.turn();
@@ -361,9 +380,10 @@ views.play = async ({ eng, color, elo, tc, daily, resume }) => {
     renderMoves();
   };
 
-  function after() {
+  async function after() {
     const now = performance.now();
     const mover = G.chess.turn() === 'w' ? 'b' : 'w';
+    const snap = { clocks: { ...G.clocks }, nTimes: G.times.length };
     // L'orologio parte dopo la prima mossa di entrambi, come su Lichess.
     if (G.turnStart !== null) G.clocks[mover] += G.inc - (now - G.turnStart);
     G.times.push(Math.round(G.clocks[mover]));
@@ -374,7 +394,17 @@ views.play = async ({ eng, color, elo, tc, daily, resume }) => {
     cancelBg();
     if (G.chess.isGameOver()) return finish();
     persistGame();
-    if (G.chess.turn() !== color) engineMove(); else startBg();
+    if (G.chess.turn() === color) return startBg();
+    if (mover === color && liveOn() && G.chess.history().length >= 1) {
+      const r = await live.review();
+      if (G.over) return;
+      if (r === 'undo') {
+        G.chess.undo(); G.clocks = snap.clocks; G.times.length = snap.nTimes; G.paused = null;
+        G.turnStart = G.chess.history().length >= 2 ? performance.now() : null;
+        persistGame(); refresh(); live.note('Riprova: pensa con calma e scegli un\'altra mossa.'); startBg(); return;
+      }
+    }
+    engineMove();
   }
   async function engineMove() {
     G.engineBusy = true;
@@ -451,6 +481,7 @@ views.play = async ({ eng, color, elo, tc, daily, resume }) => {
   const onHide = () => { if (document.visibilityState === 'hidden') persistGame(); };
   document.addEventListener('visibilitychange', onHide);
   cleanup = () => {
+    live.close();
     document.removeEventListener('visibilitychange', onHide);
     if (daily !== undefined && !G.over && G.chess.history().length) {
       // nella lezione del giorno uscire non è un abbandono: la partita resta in pausa
@@ -1122,6 +1153,8 @@ views.settings = () => {
   const meta = engineMeta();
   app.innerHTML = `
   <section class="panel"><h2>Impostazioni</h2>
+    <button class="btn primary" id="tutors2">🎓 Scegli il tutor (${esc(getAvatar(avatarId()).name)})</button>
+    <label class="switch"><input type="checkbox" id="liveSet2" ${s.liveTutor !== false ? 'checked' : ''}><span></span>Tutor in diretta nelle partite</label>
     <label class="lbl">Chiave API Anthropic (per le spiegazioni)</label>
     <input id="key" type="password" placeholder="sk-ant-…" value="${esc(s.apiKey)}" autocomplete="off">
     <p class="muted small">Resta salvata solo su questo telefono.</p>
@@ -1172,6 +1205,8 @@ views.settings = () => {
   };
   $('#look').onclick = () => go('look');
   $('#tutors').onclick = () => go('tutors');
+  $('#tutors2').onclick = () => go('tutors');
+  $('#liveSet2').onchange = e => saveSettings({ liveTutor: e.target.checked });
   $('#bkSave').onclick = () => backupSave();
   $('#bkLoad').onclick = () => $('#bkFile').click();
   $('#bkFile').onchange = e => { const f = e.target.files[0]; if (f) backupLoad(f); };

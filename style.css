@@ -395,3 +395,15 @@ details { margin-top: 10px; } summary { color: var(--accent); cursor: pointer; }
 
 .bkbanner { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
 .bkbanner p { margin: 0; }
+
+/* tutor in diretta */
+.tutor.mini { margin: 6px 0; padding: 8px 10px; gap: 10px; align-items: center; }
+.tutor.mini .tav { width: 56px; }
+.tutor.mini .tavw { width: 56px; height: 56px; }
+.tutor.mini .avbg { border-radius: 14px; box-shadow: 0 0 0 2px var(--accent); }
+.tutor.mini .tbubble { font-size: 14px; padding: 8px 10px; }
+.tutor.mini .tbubble::before { top: 16px; }
+.tutor.mini .fx { transform: scale(.6); transform-origin: 50% 50%; }
+.tbubble.thinking .ttext::after { content: '…'; animation: dots 1s steps(3) infinite; }
+@keyframes dots { 0% { opacity: .2; } 100% { opacity: 1; } }
+#liveTutor { display: contents; }
